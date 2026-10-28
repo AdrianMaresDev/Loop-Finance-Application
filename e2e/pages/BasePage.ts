@@ -9,32 +9,27 @@ export class BasePage {
 
   async navigateTo(path: string) {
     await this.page.goto(path);
-    await this.page.waitForLoadState('networkidle');
-  }
-
-  async clickNavLink(selector: string) {
-    await this.page.click(selector);
-    await this.page.waitForLoadState('networkidle');
+    await this.waitForPageLoad();
   }
 
   getSidebarLink(name: string) {
-    return this.page.locator(`nav a:has-text("${name}")`);
+    return this.page.getByRole('navigation').getByRole('link', { name });
   }
 
   async clickSidebarLink(linkText: string) {
-    await this.clickNavLink(`nav a:has-text("${linkText}")`);
+    await this.getSidebarLink(linkText).click();
   }
 
   getHeading() {
-    return this.page.locator('h1');
+    return this.page.getByTestId('page-title');
   }
 
   async waitForPageLoad() {
-    await this.page.waitForLoadState('networkidle');
+    await this.page.getByTestId('app-main').waitFor();
   }
 
   async signOut() {
-    await this.page.click('button:has-text("Sign out")');
-    await this.page.waitForLoadState('networkidle');
+    await this.page.getByTestId('signout-button').click();
+    await this.page.getByTestId('signin-form').waitFor();
   }
 }

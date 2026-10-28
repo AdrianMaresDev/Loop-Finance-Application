@@ -1,95 +1,84 @@
-import { test, expect } from '@playwright/test';
-import { TransactionsPage } from '../pages/TransactionsPage';
-import { BudgetPage } from '../pages/BudgetPage';
+import { test, expect } from '../fixtures';
+import { addMonths, currentMonth, formatMonth } from '../utils/format';
 
-const TEST_EMAIL = 'txn-test@example.com';
-const TEST_PASSWORD = 'password123';
+// Dates are built from the current month (days 01–28 exist in every month).
+const month = currentMonth();
 
 test.describe('Transactions', () => {
-  let txnPage: TransactionsPage;
-
-  test.beforeEach(async ({ page }) => {
-    const budgetPage = new BudgetPage(page);
-    await budgetPage.loginAndNavigateToBudget(TEST_EMAIL, TEST_PASSWORD);
-
-    txnPage = new TransactionsPage(page);
-    await txnPage.goto();
+  // Every test starts with a fresh, empty account.
+  test.beforeEach(async ({ newUser: _newUser, transactionsPage }) => {
+    await transactionsPage.goto();
   });
 
-  test('should display transactions page', async ({ page }) => {
-    await expect(page.locator('h1:has-text("Transactions")')).toBeVisible();
+  test('should display transactions page', async ({ transactionsPage }) => {
+    await expect(transactionsPage.title).toHaveText('Transactions');
   });
 
-  test('should add income', async ({ page }) => {
-    await txnPage.addIncome('Monthly Salary', '5000', '2026-03-01');
+  test('should add income', async ({ transactionsPage }) => {
+    await transactionsPage.addIncome('Monthly Salary', '5000', `${month}-01`);
 
-    await page.waitForTimeout(1000);
-    const rows = await txnPage.getTransactionCount();
-    expect(rows).toBeGreaterThan(0);
+    await expect(transactionsPage.rows).toHaveCount(1);
   });
 
-  test('should add a transaction with category', async () => {
-    await txnPage.addTransaction('Groceries', 'Weekly groceries', '85.50', '2026-03-02');
+  test('should add a transaction with category', async ({ budgetPage, transactionsPage }) => {
+    await budgetPage.goto();
+    await budgetPage.createCategory('Groceries');
+    await transactionsPage.goto();
 
-    const count = await txnPage.getTransactionCount();
-    expect(count).toBeGreaterThan(0);
+    await transactionsPage.addTransaction('Groceries', 'Weekly groceries', '85.50', `${month}-02`);
+
+    await expect(transactionsPage.rows).toHaveCount(1);
+    await expect(transactionsPage.getAmountCell('Weekly groceries')).toHaveText('-$85.50');
   });
 
-  test('should display transaction amount correctly', async ({ page }) => {
-    await txnPage.addIncome('Freelance Work', '1500', '2026-03-05');
-    await page.waitForTimeout(500);
+  test('should display transaction amount correctly', async ({ transactionsPage }) => {
+    await transactionsPage.addIncome('Freelance Work', '1500', `${month}-05`);
 
-    const amountText = await page.locator('table tbody tr').first()
-      .locator('td:nth-child(4)').textContent();
-    expect(amountText).toContain('1,500');
+    await expect(transactionsPage.getAmountCell('Freelance Work')).toHaveText('+$1,500.00');
   });
 
-  test('should filter transactions by search', async ({ page }) => {
-    await txnPage.addIncome('Special Payment', '200', '2026-03-10');
-    await page.waitForTimeout(500);
+  test('should filter transactions by search', async ({ transactionsPage }) => {
+    await transactionsPage.addIncome('Special Payment', '200', `${month}-10`);
+    await transactionsPage.addIncome('Regular Payment', '300', `${month}-11`);
 
-    await txnPage.searchTransactions('Special');
-    await page.waitForTimeout(500);
+    await transactionsPage.searchTransactions('Special');
 
-    const count = await txnPage.getTransactionCount();
-    expect(count).toBeGreaterThanOrEqual(1);
+    await expect(transactionsPage.rows).toHaveCount(1);
+    await expect(transactionsPage.row('Special Payment')).toBeVisible();
   });
 
-  test('should delete a transaction', async () => {
-    await txnPage.addIncome('To Delete', '100', '2026-03-15');
-    const beforeCount = await txnPage.getTransactionCount();
+  test('should delete a transaction', async ({ page, transactionsPage }) => {
+    await transactionsPage.addIncome('To Delete', '100', `${month}-15`);
 
-    await txnPage.deleteTransaction('To Delete');
-    const afterCount = await txnPage.getTransactionCount();
+    await transactionsPage.deleteTransaction('To Delete');
 
-    expect(afterCount).toBeLessThan(beforeCount);
+    await expect(transactionsPage.rows).toHaveCount(0);
+    await expect(page.getByTestId('txn-empty')).toBeVisible();
   });
 
-  test('should show income badge for income transactions', async ({ page }) => {
-    await txnPage.addIncome('Bonus', '500', '2026-03-20');
-    await page.waitForTimeout(500);
+  test('should show income badge for income transactions', async ({ transactionsPage }) => {
+    await transactionsPage.addIncome('Bonus', '500', `${month}-20`);
 
-    const badge = page.locator('table tbody tr:has-text("Bonus") td:nth-child(3)');
-    const badgeText = await badge.textContent();
-    expect(badgeText).toContain('Income');
+    await expect(transactionsPage.row('Bonus').getByTestId('txn-category-cell')).toHaveText('Income');
   });
 
-  test('should filter by month', async ({ page }) => {
-    await page.locator('select').nth(0).selectOption({ index: 1 });
-    await page.waitForTimeout(500);
+  test('should filter by month', async ({ transactionsPage }) => {
+    await transactionsPage.addIncome('This Month', '100', `${month}-01`);
+    await transactionsPage.addIncome('Last Month', '100', `${addMonths(month, -1)}-01`);
 
-    const heading = await page.locator(txnPage.pageTitle).textContent();
-    expect(heading).toBe('Transactions');
+    await transactionsPage.filterByMonth(formatMonth(month));
+
+    await expect(transactionsPage.rows).toHaveCount(1);
+    await expect(transactionsPage.row('This Month')).toBeVisible();
   });
 
-  test('should use inline selectors for amount cell', async () => {
-    await txnPage.addIncome('Check Amount', '750', '2026-03-25');
-    const cell = txnPage.getAmountCell('Check Amount');
-    await expect(cell).toBeVisible();
+  test('should show an amount for a new transaction', async ({ transactionsPage }) => {
+    await transactionsPage.addIncome('Check Amount', '750', `${month}-25`);
+
+    await expect(transactionsPage.getAmountCell('Check Amount')).toBeVisible();
   });
 
-  test('should show transaction summary in header', async ({ page }) => {
-    const summary = await page.locator('p.text-sm.text-gray-500').textContent();
-    expect(summary).toContain('transaction');
+  test('should show transaction summary in header', async ({ transactionsPage }) => {
+    await expect(transactionsPage.summary).toContainText('0 transactions');
   });
 });

@@ -1,87 +1,73 @@
-import { type Page } from '@playwright/test';
+import { type Page, expect } from '@playwright/test';
 import { BasePage } from './BasePage';
 
+export type StatKey = 'total-target' | 'funded' | 'underfunded' | 'income' | 'assigned' | 'activity';
+
 export class ReportsPage extends BasePage {
+  readonly monthLabel = this.page.getByTestId('month-label');
+  readonly breakdownTable = this.page.getByTestId('breakdown-table');
+  readonly breakdownRows = this.page.getByTestId('breakdown-row');
+
   constructor(page: Page) {
     super(page);
   }
 
   async goto() {
     await this.navigateTo('/reports');
+    await this.waitForReportLoad();
   }
 
   async waitForReportLoad() {
-    await this.page.waitForLoadState('networkidle');
-    await this.page.waitForTimeout(1000);
+    await this.stat('total-target').waitFor();
   }
 
   async navigateToMonth(direction: 'next' | 'prev') {
-    if (direction === 'next') {
-      const buttons = this.page.locator('div.flex.items-center.justify-center.gap-3 button');
-      await buttons.last().click();
-    } else {
-      const buttons = this.page.locator('div.flex.items-center.justify-center.gap-3 button');
-      await buttons.first().click();
-    }
-    await this.page.waitForTimeout(500);
+    const before = await this.monthLabel.textContent();
+    await this.page.getByTestId(direction === 'next' ? 'month-next' : 'month-prev').click();
+    await expect(this.monthLabel).not.toHaveText(before ?? '');
   }
 
   async getCurrentMonth(): Promise<string> {
-    const monthDisplay = await this.page.$('div.flex.items-center.gap-2 span.text-sm.font-semibold');
-    if (!monthDisplay) return '';
-    return (await monthDisplay.textContent()) ?? '';
+    return (await this.monthLabel.textContent()) ?? '';
   }
 
-  async getStatValue(label: string): Promise<string> {
-    await this.page.waitForTimeout(1000);
-    const statCard = this.page.locator(`div.rounded-xl:has-text("${label}")`);
-    const value = await statCard.locator('div.text-xl.font-bold').textContent();
-    return value?.trim() ?? '';
+  /** The value element of a Target Summary / Monthly Overview stat card. */
+  stat(key: StatKey) {
+    return this.page.getByTestId(`stat-${key}-value`);
   }
 
-  async verifyTargetSummary(expected: {
-    totalTarget: string;
-    funded: string;
-    underfunded: string;
-  }) {
-    const totalTarget = await this.getStatValue('Total Target Amount');
-    const funded = await this.getStatValue('Funded');
-    const underfunded = await this.getStatValue('Underfunded');
+  async getStatValue(key: StatKey): Promise<string> {
+    return (await this.stat(key).textContent())?.trim() ?? '';
+  }
 
-    const results = {
-      totalTarget: totalTarget === expected.totalTarget,
-      funded: funded === expected.funded,
-      underfunded: underfunded === expected.underfunded,
+  async getTargetSummary() {
+    return {
+      totalTarget: await this.getStatValue('total-target'),
+      funded: await this.getStatValue('funded'),
+      underfunded: await this.getStatValue('underfunded'),
     };
-
-    return results;
   }
 
-  async getMonthlyOverviewValue(label: string): Promise<string> {
-    await this.page.waitForTimeout(500);
-    const section = this.page.locator(`div.rounded-xl:has-text("${label}")`);
-    const value = await section.locator('div.text-xl.font-bold').textContent();
-    return value?.trim() ?? '';
+  breakdownRow(categoryName: string) {
+    return this.breakdownRows.filter({
+      has: this.page.getByTestId('breakdown-name').getByText(categoryName, { exact: true }),
+    });
   }
 
   async getCategoryBreakdownRow(categoryName: string) {
-    await this.page.waitForTimeout(500);
-    const table = this.page.locator('table').last();
-    const row = table.locator(`tr:has-text("${categoryName}")`);
-    const cells = await row.locator('td').allTextContents();
+    const row = this.breakdownRow(categoryName);
+    const text = async (testId: string) => (await row.getByTestId(testId).textContent())?.trim() ?? '';
     return {
-      name: cells[0]?.trim() ?? '',
-      target: cells[1]?.trim() ?? '',
-      assigned: cells[2]?.trim() ?? '',
-      activity: cells[3]?.trim() ?? '',
-      available: cells[4]?.trim() ?? '',
-      status: cells[5]?.trim() ?? '',
+      name: await text('breakdown-name'),
+      target: await text('breakdown-target'),
+      assigned: await text('breakdown-assigned'),
+      activity: await text('breakdown-activity'),
+      available: await text('breakdown-available'),
+      status: await text('breakdown-status'),
     };
   }
 
   async getCategoryCount(): Promise<number> {
-    const table = this.page.locator('table').last();
-    const rows = await table.locator('tbody tr').count();
-    return rows;
+    return this.breakdownRows.count();
   }
 }

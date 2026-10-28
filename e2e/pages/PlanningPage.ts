@@ -1,9 +1,15 @@
-import { type Page } from '@playwright/test';
+import { type Page, expect } from '@playwright/test';
 import { BasePage } from './BasePage';
 
 export class PlanningPage extends BasePage {
-  readonly heading = this.page.locator('h1');
-  readonly incomeInput = this.page.locator('input[type="number"][step="0.01"][min="0"]').first();
+  readonly heading = this.page.getByTestId('page-title');
+  readonly incomeInput = this.page.getByTestId('planner-income-input');
+  readonly incomeClear = this.page.getByTestId('planner-income-clear');
+  readonly incomeValue = this.page.getByTestId('planner-income-value');
+  readonly needValue = this.page.getByTestId('planner-need-value');
+  readonly surplusValue = this.page.getByTestId('planner-surplus-value');
+  readonly plannedInputs = this.page.getByTestId('planner-planned-input');
+  readonly tableTotal = this.page.getByTestId('planner-total-planned');
 
   constructor(page: Page) {
     super(page);
@@ -11,63 +17,59 @@ export class PlanningPage extends BasePage {
 
   async goto() {
     await this.navigateTo('/plan');
+    await this.waitForPlannerLoad();
   }
 
   async waitForPlannerLoad() {
-    await this.page.waitForLoadState('networkidle');
+    await this.incomeInput.waitFor();
   }
 
+  /** The override is only applied on blur, so press Enter to commit it. */
   async simulateIncome(amount: string) {
-    await this.incomeInput.fill(amount, { force: true });
-    await this.page.waitForTimeout(300);
+    await this.incomeInput.fill(amount);
+    await this.incomeInput.press('Enter');
+    await expect(this.incomeClear).toBeVisible();
   }
 
   async clearIncomeOverride() {
-    await this.page.locator('button:has-text("clear")').click();
-    await this.page.waitForTimeout(300);
+    await this.incomeClear.click();
+    await expect(this.incomeClear).toBeHidden();
   }
 
   getPlannedInput(index: number) {
-    return this.page.locator('input[type="number"]').nth(index);
+    return this.plannedInputs.nth(index);
   }
 
+  /** The row whose category name is exactly `name` (so "Rent" never matches "Parent"). */
   getCategoryRow(name: string) {
-    return this.page.locator(`tr:has-text("${name}")`).first();
+    return this.page.getByTestId('planner-row').filter({ has: this.page.getByText(name, { exact: true }) });
+  }
+
+  categoryDelta(categoryName: string) {
+    return this.getCategoryRow(categoryName).getByTestId('planner-delta');
   }
 
   async setPlannedAmount(categoryName: string, amount: string) {
-    const row = this.getCategoryRow(categoryName);
-    await row.locator('input[type="number"]').fill(amount, { force: true });
-    await this.page.waitForTimeout(300);
+    await this.getCategoryRow(categoryName).getByTestId('planner-planned-input').fill(amount);
   }
 
   async getSurplusOrShortfall(): Promise<string> {
-    const card = this.page.locator('div:has-text("Surplus"), div:has-text("Shortfall")').first();
-    const value = await card.locator('span.text-xl.font-bold').textContent();
-    return value?.trim() ?? '';
+    return (await this.surplusValue.textContent())?.trim() ?? '';
   }
 
   async getMonthlyIncome(): Promise<string> {
-    const card = this.page.locator('div:has-text("Monthly Income")').first();
-    const value = await card.locator('span.text-xl.font-bold').textContent();
-    return value?.trim() ?? '';
+    return (await this.incomeValue.textContent())?.trim() ?? '';
   }
 
   async getTotalMonthlyNeed(): Promise<string> {
-    const card = this.page.locator('div:has-text("Total Monthly Need")').first();
-    const value = await card.locator('span.text-xl.font-bold').textContent();
-    return value?.trim() ?? '';
+    return (await this.needValue.textContent())?.trim() ?? '';
   }
 
   async getTableTotal(): Promise<string> {
-    const footer = this.page.locator('tfoot td').nth(3);
-    const value = await footer.textContent();
-    return value?.trim() ?? '';
+    return (await this.tableTotal.textContent())?.trim() ?? '';
   }
 
   async getCategoryDelta(categoryName: string): Promise<string> {
-    const row = this.getCategoryRow(categoryName);
-    const delta = await row.locator('td').last().textContent();
-    return delta?.trim() ?? '';
+    return (await this.categoryDelta(categoryName).textContent())?.trim() ?? '';
   }
 }

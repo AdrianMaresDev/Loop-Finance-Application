@@ -1,116 +1,106 @@
-import { type Page } from '@playwright/test';
+import { type Page, expect } from '@playwright/test';
+import { BasePage } from './BasePage';
 import { SignInPage } from './SignInPage';
+import { formatCurrency, parseCurrency } from '../utils/format';
 
-export class BudgetPage {
-  readonly page: Page;
+export class BudgetPage extends BasePage {
+  readonly table = this.page.getByTestId('budget-table');
+  readonly monthLabel = this.page.getByTestId('month-label');
+  readonly readyToAssign = this.page.getByTestId('ready-to-assign-amount');
+  readonly categoryNames = this.page.getByTestId('category-name');
+  readonly archivedToggle = this.page.getByTestId('archived-toggle');
+  readonly detailPanel = this.page.getByTestId('category-detail');
 
   constructor(page: Page) {
-    this.page = page;
+    super(page);
+  }
+
+  async goto() {
+    await this.navigateTo('/');
+    await this.waitForBudgetLoad();
+  }
+
+  async waitForBudgetLoad() {
+    await this.table.waitFor();
   }
 
   async loginAndNavigateToBudget(email: string, password: string) {
     const signIn = new SignInPage(this.page);
     await signIn.goto();
-    await signIn.fillEmail(email);
-    await signIn.fillPassword(password);
-    await signIn.clickSignIn();
-    await this.page.waitForLoadState('networkidle');
-    await this.page.waitForTimeout(1000);
+    await signIn.signIn(email, password);
+    await this.waitForBudgetLoad();
+  }
+
+  /** The row whose name is exactly `name` (so "Rent" never matches "Parent"). */
+  categoryRow(name: string) {
+    return this.page
+      .getByTestId('category-row')
+      .filter({ has: this.page.getByTestId('category-name').getByText(name, { exact: true }) });
   }
 
   async createCategory(name: string) {
-    await this.page.locator('input[placeholder="New category name..."]').fill(name);
-    await this.page.locator('button:has-text("Add")').first().click();
-    await this.page.waitForTimeout(500);
+    await this.page.getByTestId('add-category-input').fill(name);
+    await this.page.getByTestId('add-category-submit').click();
+    await expect(this.categoryRow(name)).toBeVisible();
   }
 
   async assignBudget(categoryName: string, amount: string) {
-    const row = this.page.locator(`tr:has-text("${categoryName}")`);
-    await row.locator('td:nth-child(3) button').click();
-    await row.locator('td:nth-child(3) input[type="number"]').fill(amount);
-    await row.locator('td:nth-child(3) input[type="number"]').press('Enter');
-    await this.page.waitForTimeout(500);
+    const row = this.categoryRow(categoryName);
+    await row.getByTestId('category-assigned').click();
+    await row.getByTestId('category-assigned-input').fill(amount);
+    await row.getByTestId('category-assigned-input').press('Enter');
+    await expect(row.getByTestId('category-assigned')).toHaveText(formatCurrency(parseFloat(amount)));
   }
 
-  async setTarget(categoryName: string, type: string, amount: string) {
-    const row = this.page.locator(`tr:has-text("${categoryName}")`);
-    await row.click();
-    await this.page.waitForTimeout(300);
-
-    const detailPanel = this.page.locator('div.w-80');
-    await detailPanel.locator('button:has-text("Create Target")').click();
-
-    await detailPanel.locator('select').first().selectOption({ label: type });
-    await detailPanel.locator('input[type="number"]').fill(amount);
-    await detailPanel.locator('button:has-text("Save")').click();
-    await this.page.waitForTimeout(500);
+  /** `frequency` is the Frequency dropdown label; the app defaults to "Monthly". */
+  async setTarget(categoryName: string, type: string, amount: string, frequency?: string) {
+    await this.categoryRow(categoryName).getByTestId('category-name').click();
+    await this.detailPanel.getByTestId('target-create').click();
+    await this.detailPanel.getByTestId('target-type').selectOption({ label: type });
+    await this.detailPanel.getByTestId('target-amount').fill(amount);
+    if (frequency) {
+      await this.detailPanel.getByTestId('target-frequency').selectOption({ label: frequency });
+    }
+    await this.detailPanel.getByTestId('target-save').click();
+    await expect(this.detailPanel.getByTestId('target-summary')).toBeVisible();
   }
 
   async goToNextMonth() {
-    const buttons = this.page.locator('button');
-    await buttons.first().click();
-    await this.page.waitForTimeout(300);
+    const before = await this.monthLabel.textContent();
+    await this.page.getByTestId('month-next').click();
+    await expect(this.monthLabel).not.toHaveText(before ?? '');
   }
 
   async goToPrevMonth() {
-    const navButtons = this.page.locator('div.flex.items-center.gap-1 button');
-    await navButtons.first().click();
-    await this.page.waitForTimeout(300);
+    const before = await this.monthLabel.textContent();
+    await this.page.getByTestId('month-prev').click();
+    await expect(this.monthLabel).not.toHaveText(before ?? '');
   }
 
   async getReadyToAssign(): Promise<number> {
-    const pill = await this.page.$('span.tabular-nums');
-    if (!pill) return 0;
-    const text = await pill.textContent();
-    if (!text) return 0;
-    return parseFloat(text.replace(/[$,]/g, ''));
+    return parseCurrency(await this.readyToAssign.textContent());
   }
 
   async isCategoryFunded(name: string): Promise<boolean> {
-    const row = this.page.locator(`tr:has-text("${name}")`);
-    const available = await row.locator('td:nth-child(5) span').textContent();
-    if (!available) return false;
-    const amount = parseFloat(available.replace(/[$,]/g, ''));
-    return amount >= 0;
+    const available = await this.categoryRow(name).getByTestId('category-available').textContent();
+    return parseCurrency(available) >= 0;
   }
 
-  async verifyBudgetTotals(expected: { assigned: string; activity: string; available: string }) {
-    const assignedCell = await this.page.locator('table tbody tr:nth-child(1) td:nth-child(3)').textContent();
-    const activityCell = await this.page.locator('table tbody tr:nth-child(1) td:nth-child(4)').textContent();
-    const availableCell = await this.page.locator('table tbody tr:nth-child(1) td:nth-child(5)').textContent();
-
-    if (assignedCell?.trim() !== expected.assigned) {
-      throw new Error(`Assigned mismatch: expected ${expected.assigned}, got ${assignedCell}`);
-    }
-    if (activityCell?.trim() !== expected.activity) {
-      throw new Error(`Activity mismatch: expected ${expected.activity}, got ${activityCell}`);
-    }
-    if (availableCell?.trim() !== expected.available) {
-      throw new Error(`Available mismatch: expected ${expected.available}, got ${availableCell}`);
-    }
-  }
-
-  async archiveCategory(name: string) {
-    const row = this.page.locator(`tr:has-text("${name}")`);
+  /** Archives a category via the row's archive popover ("All months" by default). */
+  async archiveCategory(name: string, scope: 'all' | 'from-month' = 'all') {
+    const row = this.categoryRow(name);
     await row.hover();
-    await this.page.waitForTimeout(200);
-    await row.locator('button:has(svg.h-3\\.5)').click();
-    await this.page.waitForTimeout(500);
+    await row.getByTestId('category-archive').click();
+    await this.page.getByTestId(scope === 'all' ? 'category-archive-all' : 'category-archive-from-month').click();
+    await expect(row).toBeHidden();
   }
 
   async getMonthDisplay(): Promise<string> {
-    const heading = await this.page.$('h1');
-    if (!heading) return '';
-    return (await heading.textContent()) ?? '';
+    return (await this.monthLabel.textContent()) ?? '';
   }
 
   async getCategoryNames(): Promise<string[]> {
-    const cells = await this.page.$$('table tbody tr td:first-child span.font-medium');
-    const names: string[] = [];
-    for (const cell of cells) {
-      const text = await cell.textContent();
-      if (text) names.push(text.trim());
-    }
-    return names;
+    await this.waitForBudgetLoad();
+    return (await this.categoryNames.allTextContents()).map((n) => n.trim());
   }
 }

@@ -1,106 +1,80 @@
-import { test, expect } from '@playwright/test';
-import { ReportsPage } from '../pages/ReportsPage';
-import { BudgetPage } from '../pages/BudgetPage';
-
-const TEST_EMAIL = 'reports-test@example.com';
-const TEST_PASSWORD = 'password123';
+import { test, expect } from '../fixtures';
+import { addMonths, currentMonth, formatMonth } from '../utils/format';
 
 test.describe('Reports', () => {
-  let reportsPage: ReportsPage;
-
-  test.beforeEach(async ({ page }) => {
-    const budgetPage = new BudgetPage(page);
-    await budgetPage.loginAndNavigateToBudget(TEST_EMAIL, TEST_PASSWORD);
-
-    reportsPage = new ReportsPage(page);
-    await reportsPage.goto();
-    await page.waitForTimeout(1500);
-  });
-
-  test('should display reports page', async ({ page }) => {
-    await reportsPage.waitForReportLoad();
-    const heading = await page.locator('h1').textContent();
-    expect(heading).toBe('Reports');
-  });
-
-  test('should show target summary stats', async () => {
-    await reportsPage.waitForReportLoad();
-
-    const totalTarget = await reportsPage.getStatValue('Total Target Amount');
-    expect(totalTarget).toBeTruthy();
-
-    const funded = await reportsPage.getStatValue('Funded');
-    expect(funded).toBeTruthy();
-  });
-
-  test('should navigate between months', async () => {
-    const initialMonth = await reportsPage.getCurrentMonth();
-
-    await reportsPage.navigateToMonth('prev');
-    await reportsPage.waitForReportLoad();
-
-    const newMonth = await reportsPage.getCurrentMonth();
-    expect(newMonth).not.toBe(initialMonth);
-  });
-
-  test('should verify target summary values', async () => {
-    await reportsPage.waitForReportLoad();
-
-    const results = await reportsPage.verifyTargetSummary({
-      totalTarget: '$0.00',
-      funded: '0',
-      underfunded: '0',
+  test.describe('empty account', () => {
+    test.beforeEach(async ({ newUser: _newUser, reportsPage }) => {
+      await reportsPage.goto();
     });
 
-    expect(results.totalTarget).toBe(true);
-    expect(results.funded).toBe(true);
-    expect(results.underfunded).toBe(true);
+    test('should display reports page', async ({ reportsPage }) => {
+      await expect(reportsPage.getHeading()).toHaveText('Reports');
+      await expect(reportsPage.monthLabel).toHaveText(formatMonth(currentMonth()));
+    });
+
+    test('should navigate between months', async ({ reportsPage }) => {
+      await reportsPage.navigateToMonth('prev');
+
+      await expect(reportsPage.monthLabel).toHaveText(formatMonth(addMonths(currentMonth(), -1)));
+    });
+
+    test('should navigate forward and back', async ({ reportsPage }) => {
+      await reportsPage.navigateToMonth('next');
+      await reportsPage.navigateToMonth('prev');
+
+      await expect(reportsPage.monthLabel).toHaveText(formatMonth(currentMonth()));
+    });
+
+    test('should show category breakdown column headers', async ({ reportsPage }) => {
+      await expect(reportsPage.breakdownTable.locator('thead th')).toHaveText([
+        'Category',
+        'Target',
+        'Assigned',
+        'Activity',
+        'Available',
+        'Status',
+      ]);
+    });
+
+    test('should show stat values as formatted currency', async ({ reportsPage }) => {
+      // Funded / Underfunded are counts, not currency, so they are excluded.
+      for (const key of ['total-target', 'income', 'assigned', 'activity'] as const) {
+        await expect(reportsPage.stat(key)).toHaveText(/^-?\$[\d,]+\.\d{2}$/);
+      }
+    });
   });
 
-  test('should show monthly overview section', async ({ page }) => {
-    await page.waitForTimeout(1000);
-    await page.waitForLoadState('networkidle');
+  test.describe('with targets', () => {
+    // See TARGET_CATEGORIES in fixtures.ts for the seeded data and expected totals.
+    test.beforeEach(async ({ budgetWithTargets: _seed, reportsPage }) => {
+      await reportsPage.goto();
+    });
 
-    const incomeValue = await reportsPage.getMonthlyOverviewValue('Income');
-    expect(incomeValue).toBeTruthy();
-  });
+    test('should verify target summary values', async ({ reportsPage }) => {
+      await expect(reportsPage.stat('total-target')).toHaveText('$2,050.00');
+      await expect(reportsPage.stat('funded')).toHaveText('1');
+      await expect(reportsPage.stat('underfunded')).toHaveText('2');
+    });
 
-  test('should display category breakdown table', async () => {
-    await reportsPage.waitForReportLoad();
+    test('should show target counts by type', async ({ page }) => {
+      await expect(page.getByTestId('stat-by-type')).toContainText(/Spending\s*3/);
+    });
 
-    const count = await reportsPage.getCategoryCount();
-    expect(count).toBeGreaterThanOrEqual(0);
-  });
+    test('should show monthly overview section', async ({ reportsPage }) => {
+      await expect(reportsPage.stat('income')).toHaveText('$0.00');
+      await expect(reportsPage.stat('assigned')).toHaveText('$1,750.00');
+    });
 
-  test('should show correct category data in breakdown', async ({ page }) => {
-    await page.waitForTimeout(1500);
+    test('should display category breakdown table', async ({ reportsPage }) => {
+      await expect(reportsPage.breakdownRows).toHaveCount(3);
 
-    const tableText = await page.locator('table').last().locator('thead').textContent();
-    expect(tableText).toContain('Category');
-    expect(tableText).toContain('Target');
-    expect(tableText).toContain('Assigned');
-  });
-
-  test('should navigate forward and back', async () => {
-    const startMonth = await reportsPage.getCurrentMonth();
-
-    await reportsPage.navigateToMonth('next');
-    await reportsPage.waitForReportLoad();
-
-    await reportsPage.navigateToMonth('prev');
-    await reportsPage.waitForReportLoad();
-
-    const endMonth = await reportsPage.getCurrentMonth();
-    expect(endMonth).toBe(startMonth);
-  });
-
-  test('should show stat values as formatted currency', async ({ page }) => {
-    await page.waitForTimeout(1000);
-
-    const statElements = await page.$$('div.text-xl.font-bold.tabular-nums');
-    for (const el of statElements) {
-      const text = await el.textContent();
-      expect(text).toMatch(/\$[\d,.]+/);
-    }
+      const groceries = reportsPage.breakdownRow('Groceries');
+      await expect(groceries.getByTestId('breakdown-target')).toHaveText('$400.00');
+      await expect(groceries.getByTestId('breakdown-assigned')).toHaveText('$250.00');
+      // Activity is not asserted: it renders "-$0.00" with no transactions (known
+      // bug, see the test.fail test in budget.spec.ts).
+      await expect(groceries.getByTestId('breakdown-available')).toHaveText('$250.00');
+      await expect(groceries.getByTestId('breakdown-status')).toHaveText('Underfunded');
+    });
   });
 });

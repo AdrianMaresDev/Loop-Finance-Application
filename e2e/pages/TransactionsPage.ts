@@ -1,9 +1,14 @@
-import { type Page, type Locator } from '@playwright/test';
+import { type Page, type Locator, expect } from '@playwright/test';
 import { BasePage } from './BasePage';
 
 export class TransactionsPage extends BasePage {
-  readonly pageTitle = 'h1:has-text("Transactions")';
-  readonly searchInput = 'input[placeholder="Search transactions..."]';
+  readonly title = this.page.getByTestId('page-title');
+  readonly summary = this.page.getByTestId('page-description');
+  readonly table = this.page.getByTestId('txn-table');
+  readonly rows = this.page.getByTestId('txn-row');
+  readonly monthFilter = this.page.getByTestId('filter-month');
+  readonly categoryFilter = this.page.getByTestId('filter-category');
+  readonly searchInput = this.page.getByTestId('filter-search');
 
   constructor(page: Page) {
     super(page);
@@ -11,75 +16,72 @@ export class TransactionsPage extends BasePage {
 
   async goto() {
     await this.navigateTo('/transactions');
+    await this.table.waitFor();
+  }
+
+  /** Rows whose description is exactly `description`. */
+  row(description: string) {
+    return this.rows.filter({
+      has: this.page.getByTestId('txn-description-cell').getByText(description, { exact: true }),
+    });
   }
 
   async addIncome(description: string, amount: string, date: string) {
-    const incomeSection = this.page.locator('form').first();
-    await incomeSection.locator('input[placeholder="Salary, freelance..."]').fill(description);
-    await incomeSection.locator('input[type="number"]').fill(amount);
-    await incomeSection.locator('input[type="date"]').fill(date);
-    await incomeSection.locator('button[type="submit"]').click();
-    await this.page.waitForTimeout(500);
+    const before = await this.row(description).count();
+    await this.page.getByTestId('income-description').fill(description);
+    await this.page.getByTestId('income-amount').fill(amount);
+    await this.page.getByTestId('income-date').fill(date);
+    await this.page.getByTestId('income-submit').click();
+    await expect(this.row(description)).toHaveCount(before + 1);
   }
 
   async fillTransactionForm(description: string, amount: string, date: string) {
-    const form = this.page.locator('form').nth(1);
-    const descInput = form.locator('input[placeholder="What was this for?"]');
-    const amountInput = form.locator('input[type="number"]');
-    const dateInput = form.locator('input[type="date"]');
-    await descInput.fill(description);
-    await amountInput.fill(amount);
-    await dateInput.fill(date);
+    await this.page.getByTestId('txn-description').fill(description);
+    await this.page.getByTestId('txn-amount').fill(amount);
+    await this.page.getByTestId('txn-date').fill(date);
   }
 
   async selectCategory(categoryName: string) {
-    const categorySelect = this.page.locator('select').first();
-    await categorySelect.selectOption({ label: categoryName });
+    await this.page.getByTestId('txn-category').selectOption({ label: categoryName });
   }
 
   async submitTransaction() {
-    const form = this.page.locator('form').nth(1);
-    await form.locator('button[type="submit"]').click();
-    await this.page.waitForTimeout(500);
+    await this.page.getByTestId('txn-submit').click();
   }
 
   async addTransaction(category: string, description: string, amount: string, date: string) {
+    const before = await this.row(description).count();
     await this.selectCategory(category);
     await this.fillTransactionForm(description, amount, date);
     await this.submitTransaction();
-  }
-
-  getTransactionRow(selector: string) {
-    return this.page.locator(selector);
+    await expect(this.row(description)).toHaveCount(before + 1);
   }
 
   async getTransactionCount(): Promise<number> {
-    const rows = this.page.locator('table tbody tr');
-    return rows.count();
+    return this.rows.count();
   }
 
   async deleteTransaction(description: string) {
-    const row = this.page.locator(`table tbody tr:has-text("${description}")`);
-    await row.hover();
-    await row.locator('button').last().click();
-    await this.page.waitForTimeout(500);
+    const before = await this.row(description).count();
+    const target = this.row(description).first();
+    await target.hover();
+    await target.getByTestId('txn-delete').click();
+    await expect(this.row(description)).toHaveCount(before - 1);
   }
 
   async filterByMonth(monthLabel: string) {
-    const monthSelect = this.page.locator('select').nth(1);
-    await monthSelect.selectOption({ label: monthLabel });
+    await this.monthFilter.selectOption({ label: monthLabel });
   }
 
   async filterByCategory(categoryName: string) {
-    const catSelect = this.page.locator('select').nth(2);
-    await catSelect.selectOption({ label: categoryName });
+    await this.categoryFilter.selectOption({ label: categoryName });
   }
 
   async searchTransactions(query: string) {
-    await this.page.fill(this.searchInput, query);
+    await this.searchInput.fill(query);
   }
 
   getAmountCell(description: string): Locator {
-    return this.page.locator(`table tbody tr:has-text("${description}") td:nth-child(4)`);
+    return this.row(description).first().getByTestId('txn-amount-cell');
   }
 }

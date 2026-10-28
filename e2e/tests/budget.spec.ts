@@ -1,91 +1,92 @@
-import { test, expect } from '@playwright/test';
-import { BudgetPage } from '../pages/BudgetPage';
-
-const TEST_EMAIL = 'budget-test@example.com';
-const TEST_PASSWORD = 'password123';
+import { test, expect } from '../fixtures';
+import { addMonths, currentMonth, formatMonth } from '../utils/format';
 
 test.describe('Budget Management', () => {
-  let budgetPage: BudgetPage;
+  // Requesting `newUser` signs up a fresh account per test, so every test starts
+  // from an empty budget and the exact amounts below are deterministic.
+  test.beforeEach(async ({ newUser: _newUser }) => {});
 
-  test.beforeEach(async ({ page }) => {
-    budgetPage = new BudgetPage(page);
-    await budgetPage.loginAndNavigateToBudget(TEST_EMAIL, TEST_PASSWORD);
+  test('should display budget page after login', async ({ budgetPage }) => {
+    await expect(budgetPage.monthLabel).toHaveText(formatMonth(currentMonth()));
+    await expect(budgetPage.table).toBeVisible();
   });
 
-  test('should display budget page after login', async ({ page }) => {
-    await page.waitForTimeout(2000);
-    const heading = await page.locator('h1').textContent();
-    expect(heading).toBeTruthy();
+  test('should show ready to assign amount', async ({ budgetPage }) => {
+    await expect(budgetPage.readyToAssign).toHaveText('$0.00');
   });
 
-  test('should show ready to assign amount', async () => {
-    const amount = await budgetPage.getReadyToAssign();
-    expect(typeof amount).toBe('number');
-  });
-
-  test('should create a new category', async ({ page }) => {
+  test('should create a new category', async ({ budgetPage }) => {
     await budgetPage.createCategory('Groceries');
-    await page.waitForTimeout(1000);
 
-    const categories = await budgetPage.getCategoryNames();
-    expect(categories).toContain('Groceries');
+    await expect(budgetPage.categoryNames).toHaveText(['Groceries']);
   });
 
-  test('should assign budget to a category', async ({ page }) => {
+  test('should assign budget to a category', async ({ budgetPage }) => {
     await budgetPage.createCategory('Utilities');
     await budgetPage.assignBudget('Utilities', '150');
 
-    await page.waitForTimeout(1000);
-    const text = await page.locator('.tabular-nums').first().textContent();
-    expect(text).toBeTruthy();
+    // No income yet, so assigning money puts Ready to Assign into the negative.
+    await expect(budgetPage.readyToAssign).toHaveText('-$150.00');
   });
 
-  test('should set a monthly spending target', async () => {
+  test('should set a monthly spending target', async ({ budgetPage }) => {
     await budgetPage.createCategory('Entertainment');
     await budgetPage.setTarget('Entertainment', 'Monthly Spending', '100');
+
+    const row = budgetPage.categoryRow('Entertainment');
+    await expect(row.getByTestId('category-target')).toHaveText('$100.00');
+    await expect(row.getByTestId('category-status')).toHaveText('Underfunded by $100.00');
   });
 
-  test('should navigate between months', async () => {
-    const initialMonth = await budgetPage.getMonthDisplay();
+  test('should navigate between months', async ({ budgetPage }) => {
     await budgetPage.goToNextMonth();
-    const newMonth = await budgetPage.getMonthDisplay();
-    expect(newMonth).not.toBe(initialMonth);
+
+    await expect(budgetPage.monthLabel).toHaveText(formatMonth(addMonths(currentMonth(), 1)));
   });
 
-  test('should check if category is funded', async () => {
+  test('should show assigned money as available', async ({ budgetPage }) => {
     await budgetPage.createCategory('Savings');
     await budgetPage.assignBudget('Savings', '500');
 
-    const funded = await budgetPage.isCategoryFunded('Savings');
-    expect(funded).toBe(true);
+    await expect(budgetPage.categoryRow('Savings').getByTestId('category-available')).toHaveText('$500.00');
+    await expect.poll(() => budgetPage.isCategoryFunded('Savings')).toBe(true);
   });
 
-  test('should verify budget totals', async () => {
+  test('should verify budget totals', async ({ budgetPage }) => {
     await budgetPage.createCategory('Rent');
     await budgetPage.assignBudget('Rent', '1200');
 
-    await budgetPage.verifyBudgetTotals({
-      assigned: '$1,200.00',
-      activity: '$0.00',
-      available: '$1,200.00',
-    });
+    const row = budgetPage.categoryRow('Rent');
+    await expect(row.getByTestId('category-assigned')).toHaveText('$1,200.00');
+    await expect(row.getByTestId('category-available')).toHaveText('$1,200.00');
   });
 
-  test('should archive a category', async ({ page }) => {
+  test('should show $0.00 activity for a category with no transactions', async ({ budgetPage }) => {
+    await budgetPage.createCategory('Rent');
+
+    // Known bug: the backend negates activity (`activity: -activity` in
+    // convex/budget/model.ts), turning 0 into -0, which formats as "-$0.00".
+    // Marked here, not at the top, so a failure in the setup above still fails
+    // the test normally. Remove once fixed; Playwright fails the test if it passes.
+    test.fail(true, 'Known bug: Activity shows "-$0.00" instead of "$0.00"');
+    await expect(budgetPage.categoryRow('Rent').getByTestId('category-activity')).toHaveText('$0.00');
+  });
+
+  test('should archive a category', async ({ budgetPage }) => {
     await budgetPage.createCategory('Old Category');
-    await page.waitForTimeout(500);
-
     await budgetPage.archiveCategory('Old Category');
-    await page.waitForTimeout(1000);
 
-    const categories = await budgetPage.getCategoryNames();
-    expect(categories).not.toContain('Old Category');
+    await expect(budgetPage.categoryRow('Old Category')).toBeHidden();
+    await expect(budgetPage.archivedToggle).toContainText('Archived (1)');
   });
 
-  test('should display correct table structure', async ({ page }) => {
-    await page.waitForTimeout(1500);
-
-    const headerText = await page.locator('table thead tr th').allTextContents();
-    expect(headerText.length).toBeGreaterThanOrEqual(4);
+  test('should display correct table structure', async ({ budgetPage }) => {
+    await expect(budgetPage.table.locator('thead th')).toHaveText([
+      'Category',
+      'Target',
+      'Assigned',
+      'Activity',
+      'Available',
+    ]);
   });
 });

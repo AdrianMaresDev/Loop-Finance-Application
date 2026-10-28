@@ -9,5 +9,5 @@
     "rootDir": ".",
     "baseUrl": "."
   },
-  "include": ["pages/**/*.ts", "tests/**/*.ts", "playwright.config.ts"]
+  "include": ["pages/**/*.ts", "tests/**/*.ts", "utils/**/*.ts", "fixtures.ts", "playwright.config.ts"]
 }

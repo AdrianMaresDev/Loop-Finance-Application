@@ -1,10 +1,25 @@
-import { type Page } from '@playwright/test';
+import { type Page, type Locator, expect } from '@playwright/test';
 
 export class SignInPage {
   readonly page: Page;
+  readonly form: Locator;
+  readonly emailInput: Locator;
+  readonly passwordInput: Locator;
+  readonly submitButton: Locator;
+  readonly toggleFlowButton: Locator;
+  readonly anonymousButton: Locator;
+  readonly errorToast: Locator;
 
   constructor(page: Page) {
     this.page = page;
+    this.form = page.getByTestId('signin-form');
+    this.emailInput = page.getByTestId('signin-email');
+    this.passwordInput = page.getByTestId('signin-password');
+    this.submitButton = page.getByTestId('signin-submit');
+    this.toggleFlowButton = page.getByTestId('signin-toggle-flow');
+    this.anonymousButton = page.getByTestId('signin-anonymous');
+    // Auth errors are shown as sonner toasts, not inline in the form.
+    this.errorToast = page.locator('[data-sonner-toast][data-type="error"]');
   }
 
   async goto() {
@@ -12,51 +27,51 @@ export class SignInPage {
   }
 
   async fillEmail(value: string) {
-    const emailInput = await this.page.$('#email');
-    if (emailInput) {
-      await emailInput.fill(value);
-    }
+    await this.emailInput.fill(value);
   }
 
   async fillPassword(value: string) {
-    const passwordInput = await this.page.$('div.space-y-2 > input[type="password"]');
-    if (passwordInput) {
-      await passwordInput.fill(value);
-    }
+    await this.passwordInput.fill(value);
   }
 
   async clickSignIn() {
-    const submitBtn = await this.page.$('button[type="submit"]');
-    if (submitBtn) {
-      await submitBtn.click();
-    }
+    await this.submitButton.click();
   }
 
   async switchToSignUp() {
-    await this.page.click('//button[contains(text(), "Sign up")]');
+    await this.toggleFlowButton.click();
+    await expect(this.submitButton).toHaveText('Sign up');
   }
 
   async switchToSignIn() {
-    await this.page.click('//button[contains(text(), "Sign in instead")]');
+    await this.toggleFlowButton.click();
+    await expect(this.submitButton).toHaveText('Sign in');
   }
 
   async clickAnonymousSignIn() {
-    const anonBtn = await this.page.$('button:has-text("Continue anonymously")');
-    if (anonBtn) {
-      await anonBtn.click();
-    }
+    await this.anonymousButton.click();
+  }
+
+  async signIn(email: string, password: string) {
+    await this.fillEmail(email);
+    await this.fillPassword(password);
+    await this.clickSignIn();
+    await this.page.getByTestId('app-main').waitFor();
+  }
+
+  async signUp(email: string, password: string) {
+    await this.switchToSignUp();
+    await this.fillEmail(email);
+    await this.fillPassword(password);
+    await this.clickSignIn();
+    await this.page.getByTestId('app-main').waitFor();
   }
 
   async getFormFieldCount(): Promise<number> {
-    const inputs = await this.page.$$('form input');
-    return inputs.length;
+    return this.form.locator('input').count();
   }
 
   async getErrorMessage(): Promise<string | null> {
-    const errorEl = await this.page.$('div.flex.flex-col.gap-4 > div.text-red-500');
-    if (errorEl) {
-      return errorEl.textContent();
-    }
-    return null;
+    return this.errorToast.first().textContent();
   }
 }

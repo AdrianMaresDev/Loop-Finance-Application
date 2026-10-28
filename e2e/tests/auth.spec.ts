@@ -1,76 +1,55 @@
-import { test, expect } from '@playwright/test';
-import { SignInPage } from '../pages/SignInPage';
+import { test, expect } from '../fixtures';
+import { randomUUID } from 'node:crypto';
 
-const TEST_EMAIL = 'testuser@example.com';
-const TEST_PASSWORD = 'password123';
+// Defaults to the account from the original suite (not present on the current
+// deployment); override with E2E_EMAIL / E2E_PASSWORD.
+const VALID_EMAIL = process.env.E2E_EMAIL ?? 'testuser@example.com';
+const VALID_PASSWORD = process.env.E2E_PASSWORD ?? 'password123';
 
 test.describe('Authentication', () => {
-  let signInPage: SignInPage;
-
-  test.beforeEach(async ({ page }) => {
-    signInPage = new SignInPage(page);
+  test.beforeEach(async ({ signInPage }) => {
     await signInPage.goto();
   });
 
-  test('should display sign in form', async ({ page }) => {
-    const emailInput = await page.$('#email');
-    expect(emailInput).not.toBeNull();
-
-    const passwordInput = await page.$('#password');
-    expect(passwordInput).not.toBeNull();
-
-    const submitBtn = await page.$('button[type="submit"]');
-    expect(submitBtn).not.toBeNull();
+  test('should display sign in form', async ({ signInPage }) => {
+    await expect(signInPage.emailInput).toBeVisible();
+    await expect(signInPage.passwordInput).toBeVisible();
+    await expect(signInPage.submitButton).toBeVisible();
   });
 
-  test('should sign in with valid credentials', async ({ page }) => {
-    await signInPage.fillEmail(TEST_EMAIL);
-    await signInPage.fillPassword(TEST_PASSWORD);
+  test('should sign in with valid credentials', async ({ page, signInPage }) => {
+    await signInPage.signIn(VALID_EMAIL, VALID_PASSWORD);
 
-    const submitBtn = await page.$('button[type="submit"]');
-    await submitBtn?.click();
-
-    await page.waitForLoadState('networkidle');
-    await expect(page.locator('h1')).toBeVisible();
+    await expect(page.getByTestId('app-main')).toBeVisible();
   });
 
-  test('should show error for invalid credentials', async ({ page }) => {
+  test('should show error for invalid credentials', async ({ signInPage }) => {
     await signInPage.fillEmail('bad@example.com');
     await signInPage.fillPassword('wrongpassword');
     await signInPage.clickSignIn();
 
-    await page.waitForTimeout(1000);
-    const error = await signInPage.getErrorMessage();
-    expect(error).not.toBeNull();
+    await expect(signInPage.errorToast).toBeVisible();
   });
 
-  test('should switch to sign up flow', async ({ page }) => {
+  test('should switch to sign up flow', async ({ signInPage }) => {
     await signInPage.switchToSignUp();
 
-    const submitBtn = await page.$('button[type="submit"]');
-    const btnText = await submitBtn?.textContent();
-    expect(btnText).toContain('Sign up');
+    await expect(signInPage.submitButton).toHaveText('Sign up');
   });
 
-  test('should sign up new user', async ({ page }) => {
-    await signInPage.switchToSignUp();
+  test('should sign up new user', async ({ page, signInPage }) => {
+    await signInPage.signUp(`e2e-${randomUUID()}@example.test`, 'securepassword');
 
-    await page.locator('input[name="email"]').fill('newuser@example.com');
-    await page.locator('input[type="password"]').fill('securepassword');
-
-    await page.locator('button[type="submit"]').click();
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByTestId('app-main')).toBeVisible();
   });
 
-  test('should sign in anonymously', async () => {
+  test('should sign in anonymously', async ({ page, signInPage }) => {
     await signInPage.clickAnonymousSignIn();
 
-    const fieldCount = await signInPage.getFormFieldCount();
-    expect(fieldCount).toBeGreaterThanOrEqual(0);
+    await expect(page.getByTestId('app-main')).toBeVisible();
   });
 
-  test('should have correct number of form fields', async () => {
-    const count = await signInPage.getFormFieldCount();
-    expect(count).toBe(2);
+  test('should have correct number of form fields', async ({ signInPage }) => {
+    await expect(signInPage.form.locator('input')).toHaveCount(2);
   });
 });
